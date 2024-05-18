@@ -1,0 +1,2 @@
+rootProject.name = 'nalbind'
+include 'nalbind', 'module1', 'module2'
