@@ -4,13 +4,6 @@ plugins {
 	id "com.diffplug.spotless" version "6.20.0"
 }
 
-repositories {
-	maven {
-		url 'https://plugins.gradle.org/m2/'
-	}
-	mavenCentral()
-}
-
 spotless {
 	enforceCheck false
 	java {
@@ -35,4 +28,14 @@ spotless {
 allprojects {
 	group = 'org.elasticsearch'
 	// version should be set as a property with -Pversion
+
+	repositories {
+		maven {
+			url 'https://plugins.gradle.org/m2/'
+		}
+		mavenCentral()
+	}
+
 }
+
+

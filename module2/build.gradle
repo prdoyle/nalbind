@@ -1,0 +1,11 @@
+// module1/build.gradle
+
+plugins {
+    id 'java'
+}
+
+dependencies {
+    implementation(project(":nalbind-api"))
+    implementation(project(":module1"))
+}
+
