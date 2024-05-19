@@ -14,7 +14,9 @@ class InjectorTest {
 	void test() {
 		Injector injector = Injector.withFullLayerScan(getClass().getModule().getLayer());
 		Module2Service module2Service = injector.getInstance(Module2Service.class);
-		assertEquals("Module1Service: Hello from Module1ServiceImpl", module2Service.statusReport());
+		assertEquals(
+			"Module1Service: Hello from Module1ServiceImpl to my 1 listeners",
+			module2Service.statusReport());
 	}
 
 	@Test

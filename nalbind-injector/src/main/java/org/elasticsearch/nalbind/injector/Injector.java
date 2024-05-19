@@ -2,8 +2,10 @@ package org.elasticsearch.nalbind.injector;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -14,6 +16,7 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.elasticsearch.nalbind.api.Inject;
 import org.elasticsearch.nalbind.api.InjectableSingleton;
+import org.elasticsearch.nalbind.api.ReportInjected;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,8 +41,33 @@ public class Injector {
 
 	private void scan(ModuleLayer layer) {
 		var specsByClass = discoveredInjectableClasses(layer);
-		var plan = instantiationPlan(specsByClass);
-		executePlan(plan);
+		Collection<UnambiguousSpec> plan = instantiationPlan(specsByClass);
+		executeInstantiationPlan(plan);
+		reportInjectedObjects(specsByClass);
+	}
+
+	private void reportInjectedObjects(Map<Class<?>, InjectionSpec> specsByClass) {
+		Set<Object> distinctInstances = newSetFromMap(new IdentityHashMap<>());
+		distinctInstances.addAll(instances.values());
+
+		// There must be a more efficient way to do this...
+		for (Object obj: distinctInstances) {
+			var spec = specsByClass.get(obj.getClass());
+			if (spec instanceof ConstructorSpec c) {
+				for (Method m: c.reportInjectedMethods()) {
+					ReportInjected ri = m.getAnnotation(ReportInjected.class);
+					Class<?> requiredType = ri.value();
+					var relevantObjects = distinctInstances.stream()
+						.filter(requiredType::isInstance)
+						.toList();
+					try {
+						m.invoke(obj, relevantObjects);
+					} catch (IllegalAccessException | InvocationTargetException e) {
+						throw new IllegalStateException("Can't invoke " + ReportInjected.class.getSimpleName() + " method", e);
+					}
+				}
+			}
+		}
 	}
 
 	/**
@@ -49,7 +77,12 @@ public class Injector {
 	 *     All {@link InjectableSingleton} types provided ny all modules in the given <code>layer</code>
 	 * </li><li>
 	 *     All types of parameters passed to the constructor used to instantiate any discovered class.
+	 * </li><li>
+	 *     All types of parameters passed to {@link ReportInjected} methods in any discovered class.
 	 * </li></ul>
+	 *
+	 * TODO: This is currently a lie. We only discover {@link InjectableSingleton} classes.
+	 * <p>
 	 *
 	 * Note, in particular, that <em>subtypes are not discovered automatically</em>.
 	 * For example, if your constructor takes a parameter whose type is an interface,
@@ -61,13 +94,13 @@ public class Injector {
 	 * but only if those classes are explicitly named in an injectable constructor somewhere.
 	 */
 	private static Map<Class<?>, InjectionSpec> discoveredInjectableClasses(ModuleLayer layer) {
-		Set<Class<?>> discoveredClasses = new HashSet<>();
+		Set<Class<?>> moduleScanResults = new HashSet<>();
 		for (var m: layer.modules()) {
 			for (var p: m.getDescriptor().provides()) {
 				if (InjectableSingleton.class.getName().equals(p.service())) {
 					p.providers().forEach(name -> {
 						try {
-							discoveredClasses.add(m.getClassLoader().loadClass(name));
+							moduleScanResults.add(m.getClassLoader().loadClass(name));
 						} catch (ClassNotFoundException e) {
 							throw new IllegalStateException("Unexpected error scanning module layer", e);
 						}
@@ -75,15 +108,12 @@ public class Injector {
 				}
 			}
 		}
-		Set<Class<?>> allDiscoveredClasses = Set.copyOf(discoveredClasses);
-		LOGGER.debug("Discovered classes: {}", allDiscoveredClasses);
+		Set<Class<?>> rootSet = Set.copyOf(moduleScanResults);
+		LOGGER.debug("Root set: {}", rootSet);
 
-		// By using a LinkedHashMap, we preserve the order that the classes
-		// were encountered (a postorder) which also happens to be the
-		// right order to instantiate the objects.
 		Map<Class<?>, InjectionSpec> specsByClass = new LinkedHashMap<>();
-		for (var c: allDiscoveredClasses) {
-			computeSpec(c, discoveredClasses, specsByClass);
+		for (var c: rootSet) {
+			computeSpec(c, moduleScanResults, specsByClass);
 		}
 		if (LOGGER.isTraceEnabled()) {
 			LOGGER.trace("Specs: {}",
@@ -137,7 +167,7 @@ public class Injector {
 		}
 	}
 
-	private void executePlan(Collection<UnambiguousSpec> plan) {
+	private void executeInstantiationPlan(Collection<UnambiguousSpec> plan) {
 		plan.forEach(spec -> {
 			switch (spec) {
 				case ConstructorSpec c -> {
@@ -178,19 +208,53 @@ public class Injector {
 			Constructor<?> constructor = getSuitableConstructorIfAny(c);
 			if (constructor == null) {
 				LOGGER.debug("No suitable constructor: {}", c);
-			} else {
-				LOGGER.trace("Recurse into parameters for: {}", constructor);
-				for (var pt: constructor.getParameterTypes()) {
+				return;
+			}
+
+			LOGGER.trace("Recurse into parameters for constructor: {}", constructor);
+			for (var pt: constructor.getParameterTypes()) {
+				computeSpec(pt, checklist, specsByClass);
+			}
+
+			List<Method> reportInjectedMethods = getReportInjectedMethods(c);
+			for (Method m: reportInjectedMethods) {
+				LOGGER.trace("Recurse into parameters for method: {}", m);
+				for (var pt: m.getParameterTypes()) {
 					computeSpec(pt, checklist, specsByClass);
 				}
+			}
 
-				registerSpec(new ConstructorSpec(constructor), specsByClass);
-				aliasSuperinterfaces(c, c, specsByClass);
-				for (Class<?> superclass = c.getSuperclass(); superclass != Object.class; superclass = superclass.getSuperclass()) {
-					registerSpec(new AliasSpec(superclass, c), specsByClass);
-					aliasSuperinterfaces(superclass, c, specsByClass);
+			registerSpec(new ConstructorSpec(constructor, reportInjectedMethods), specsByClass);
+			aliasSuperinterfaces(c, c, specsByClass);
+			for (Class<?> superclass = c.getSuperclass(); superclass != Object.class; superclass = superclass.getSuperclass()) {
+				registerSpec(new AliasSpec(superclass, c), specsByClass);
+				aliasSuperinterfaces(superclass, c, specsByClass);
+			}
+		}
+	}
+
+	private static List<Method> getReportInjectedMethods(Class<?> givenClass) {
+		List<Method> result = new ArrayList<>();
+		for (var c = givenClass; c != Object.class; c = c.getSuperclass()) {
+			for (var m: c.getDeclaredMethods()) {
+				if (m.isAnnotationPresent(ReportInjected.class)) {
+					checkValidInjectedMethod(m);
+					result.add(m);
 				}
 			}
+		}
+		return result;
+	}
+
+	private static void checkValidInjectedMethod(Method method) {
+		var pts = method.getParameterTypes();
+		if (pts.length != 1) {
+			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method to have one parameter: " + method);
+		}
+		var pt = pts[0];
+		if (!Collection.class.equals(pt)) {
+			// TODO: It should also a collection of the right type of elements
+			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method parameter to be a Collection: " + method);
 		}
 	}
 

@@ -1,12 +1,15 @@
 package org.elasticsearch.nalbind.injector;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
+import java.util.List;
 
 /**
  * Indicates that a type should be instantiated by calling its constructor.
  */
 record ConstructorSpec(
-	Constructor<?> constructor
+	Constructor<?> constructor,
+	List<Method> reportInjectedMethods
 ) implements UnambiguousSpec {
 	@Override
 	public Class<?> requestedType() {
