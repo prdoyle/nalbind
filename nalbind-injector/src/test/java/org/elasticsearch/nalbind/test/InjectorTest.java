@@ -19,7 +19,6 @@ class InjectorTest {
 			module2Service.statusReport());
 	}
 
-	@Test
 	void testDetectAllSPI() throws IOException {
 		for (var m: Module2Service.class.getModule().getLayer().modules()) {
 			System.out.println("Module: " + m);

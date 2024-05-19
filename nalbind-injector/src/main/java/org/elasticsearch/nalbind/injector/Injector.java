@@ -47,38 +47,6 @@ public class Injector {
 		reportInjectedObjects(specsByClass);
 	}
 
-	private void reportInjectedObjects(Map<Class<?>, InjectionSpec> specsByClass) {
-		Set<Object> distinctInstances = newSetFromMap(new IdentityHashMap<>());
-		distinctInstances.addAll(instances.values());
-
-		// There must be a more efficient way to do this...
-		for (Object obj: distinctInstances) {
-			var spec = specsByClass.get(obj.getClass());
-			if (spec instanceof ConstructorSpec c) {
-				for (Method m: c.reportInjectedMethods()) {
-					Type requiredType = ((ParameterizedType)m.getGenericParameterTypes()[0]).getActualTypeArguments()[0];
-					Class<?> requiredClass = rawClass(requiredType);
-					var relevantObjects = distinctInstances.stream()
-						.filter(requiredClass::isInstance)
-						.toList();
-					try {
-						m.invoke(obj, relevantObjects);
-					} catch (IllegalAccessException | InvocationTargetException e) {
-						throw new IllegalStateException("Can't invoke " + ReportInjected.class.getSimpleName() + " method", e);
-					}
-				}
-			}
-		}
-	}
-
-	private static Class<?> rawClass(Type sourceType) {
-		if (sourceType instanceof ParameterizedType pt) {
-			return (Class<?>)pt.getRawType();
-		} else {
-			return (Class<?>)sourceType;
-		}
-	}
-
 	/**
 	 * The classes this will locate are:
 	 *
@@ -131,6 +99,106 @@ public class Injector {
 					.collect(joining("\n\t", "\n\t", "")));
 		}
 		return specsByClass;
+	}
+
+	/**
+	 * @param checklist will have <code>c</code> removed from it
+	 * @param specsByClass will be left in topological order
+	 */
+	private static void computeSpec(Class<?> c, Set<Class<?>> checklist, Map<Class<?>, InjectionSpec> specsByClass) {
+		InjectionSpec existingResult = specsByClass.get(c);
+		if (existingResult != null) {
+			LOGGER.trace("Spec for {} already exists", c);
+			return;
+		}
+
+		if (checklist.remove(c)) {
+			Constructor<?> constructor = getSuitableConstructorIfAny(c);
+			if (constructor == null) {
+				LOGGER.debug("No suitable constructor: {}", c);
+				return;
+			}
+
+			LOGGER.trace("Recurse into parameters for constructor: {}", constructor);
+			for (var pt: constructor.getParameterTypes()) {
+				computeSpec(pt, checklist, specsByClass);
+			}
+
+			List<Method> reportInjectedMethods = getReportInjectedMethods(c);
+			for (Method m: reportInjectedMethods) {
+				LOGGER.trace("Recurse into parameters for method: {}", m);
+				for (var pt: m.getParameterTypes()) {
+					computeSpec(pt, checklist, specsByClass);
+				}
+			}
+
+			registerSpec(new ConstructorSpec(constructor, reportInjectedMethods), specsByClass);
+			aliasSuperinterfaces(c, c, specsByClass);
+			for (Class<?> superclass = c.getSuperclass(); superclass != Object.class; superclass = superclass.getSuperclass()) {
+				registerSpec(new AliasSpec(superclass, c), specsByClass);
+				aliasSuperinterfaces(superclass, c, specsByClass);
+			}
+		}
+	}
+
+	private static Constructor<?> getSuitableConstructorIfAny(Class<?> type) {
+		Constructor<?>[] constructors = type.getDeclaredConstructors();
+		if (constructors.length == 1) {
+			return constructors[0];
+		} else {
+			var injectConstructors = Stream.of(constructors)
+				.filter(c -> c.isAnnotationPresent(Inject.class))
+				.toList();
+			if (injectConstructors.size() == 1) {
+				return injectConstructors.getFirst();
+			} else {
+				return null;
+			}
+		}
+	}
+
+	private static void aliasSuperinterfaces(Class<?> classToScan, Class<?> classToAlias, Map<Class<?>, InjectionSpec> specsByClass) {
+		for (var i: classToScan.getInterfaces()) {
+			registerSpec(new AliasSpec(i, classToAlias), specsByClass);
+			aliasSuperinterfaces(i, classToAlias, specsByClass);
+		}
+	}
+
+	private static void registerSpec(InjectionSpec spec, Map<Class<?>, InjectionSpec> specsByClass) {
+		Class<?> requestedType = spec.requestedType();
+		var existing = specsByClass.put(requestedType, spec);
+		if (existing != null && !existing.equals(spec)) {
+			AmbiguousSpec ambiguousSpec = new AmbiguousSpec(requestedType, spec, existing);
+			LOGGER.trace("Ambiguity discovered: {}", ambiguousSpec);
+			specsByClass.put(requestedType, ambiguousSpec);
+		} else {
+			LOGGER.trace("Register spec: {}", spec);
+		}
+	}
+
+	private static List<Method> getReportInjectedMethods(Class<?> givenClass) {
+		List<Method> result = new ArrayList<>();
+		for (var c = givenClass; c != Object.class; c = c.getSuperclass()) {
+			for (var m: c.getDeclaredMethods()) {
+				if (m.isAnnotationPresent(ReportInjected.class)) {
+					checkValidInjectedMethod(m);
+					result.add(m);
+				}
+			}
+		}
+		return result;
+	}
+
+	private static void checkValidInjectedMethod(Method method) {
+		var pts = method.getParameterTypes();
+		if (pts.length != 1) {
+			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method to have one parameter: " + method);
+		}
+		var pt = pts[0];
+		if (!Collection.class.equals(pt)) {
+			// TODO: It should also a collection of the right type of elements
+			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method parameter to be a Collection: " + method);
+		}
 	}
 
 	/**
@@ -202,103 +270,35 @@ public class Injector {
 		}
 	}
 
-	/**
-	 * @param checklist will have <code>c</code> removed from it
-	 * @param specsByClass will be left in topological order
-	 */
-	private static void computeSpec(Class<?> c, Set<Class<?>> checklist, Map<Class<?>, InjectionSpec> specsByClass) {
-		InjectionSpec existingResult = specsByClass.get(c);
-		if (existingResult != null) {
-			LOGGER.trace("Spec for {} already exists", c);
-			return;
-		}
+	private void reportInjectedObjects(Map<Class<?>, InjectionSpec> specsByClass) {
+		Set<Object> distinctInstances = newSetFromMap(new IdentityHashMap<>());
+		distinctInstances.addAll(instances.values());
 
-		if (checklist.remove(c)) {
-			Constructor<?> constructor = getSuitableConstructorIfAny(c);
-			if (constructor == null) {
-				LOGGER.debug("No suitable constructor: {}", c);
-				return;
-			}
-
-			LOGGER.trace("Recurse into parameters for constructor: {}", constructor);
-			for (var pt: constructor.getParameterTypes()) {
-				computeSpec(pt, checklist, specsByClass);
-			}
-
-			List<Method> reportInjectedMethods = getReportInjectedMethods(c);
-			for (Method m: reportInjectedMethods) {
-				LOGGER.trace("Recurse into parameters for method: {}", m);
-				for (var pt: m.getParameterTypes()) {
-					computeSpec(pt, checklist, specsByClass);
-				}
-			}
-
-			registerSpec(new ConstructorSpec(constructor, reportInjectedMethods), specsByClass);
-			aliasSuperinterfaces(c, c, specsByClass);
-			for (Class<?> superclass = c.getSuperclass(); superclass != Object.class; superclass = superclass.getSuperclass()) {
-				registerSpec(new AliasSpec(superclass, c), specsByClass);
-				aliasSuperinterfaces(superclass, c, specsByClass);
-			}
-		}
-	}
-
-	private static List<Method> getReportInjectedMethods(Class<?> givenClass) {
-		List<Method> result = new ArrayList<>();
-		for (var c = givenClass; c != Object.class; c = c.getSuperclass()) {
-			for (var m: c.getDeclaredMethods()) {
-				if (m.isAnnotationPresent(ReportInjected.class)) {
-					checkValidInjectedMethod(m);
-					result.add(m);
+		// There must be a more efficient way to do this. This way is quadratic.
+		for (Object obj: distinctInstances) {
+			var spec = specsByClass.get(obj.getClass());
+			if (spec instanceof ConstructorSpec c) {
+				for (Method m: c.reportInjectedMethods()) {
+					Type requiredType = ((ParameterizedType)m.getGenericParameterTypes()[0]).getActualTypeArguments()[0];
+					Class<?> requiredClass = rawClass(requiredType);
+					var relevantObjects = distinctInstances.stream()
+						.filter(requiredClass::isInstance)
+						.toList();
+					try {
+						m.invoke(obj, relevantObjects);
+					} catch (IllegalAccessException | InvocationTargetException e) {
+						throw new IllegalStateException("Can't invoke " + ReportInjected.class.getSimpleName() + " method", e);
+					}
 				}
 			}
 		}
-		return result;
 	}
 
-	private static void checkValidInjectedMethod(Method method) {
-		var pts = method.getParameterTypes();
-		if (pts.length != 1) {
-			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method to have one parameter: " + method);
-		}
-		var pt = pts[0];
-		if (!Collection.class.equals(pt)) {
-			// TODO: It should also a collection of the right type of elements
-			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method parameter to be a Collection: " + method);
-		}
-	}
-
-	private static void aliasSuperinterfaces(Class<?> classToScan, Class<?> classToAlias, Map<Class<?>, InjectionSpec> specsByClass) {
-		for (var i: classToScan.getInterfaces()) {
-			registerSpec(new AliasSpec(i, classToAlias), specsByClass);
-			aliasSuperinterfaces(i, classToAlias, specsByClass);
-		}
-	}
-
-	private static void registerSpec(InjectionSpec spec, Map<Class<?>, InjectionSpec> specsByClass) {
-		Class<?> requestedType = spec.requestedType();
-		var existing = specsByClass.put(requestedType, spec);
-		if (existing != null && !existing.equals(spec)) {
-			AmbiguousSpec ambiguousSpec = new AmbiguousSpec(requestedType, spec, existing);
-			LOGGER.trace("Ambiguity discovered: {}", ambiguousSpec);
-			specsByClass.put(requestedType, ambiguousSpec);
+	private static Class<?> rawClass(Type sourceType) {
+		if (sourceType instanceof ParameterizedType pt) {
+			return (Class<?>)pt.getRawType();
 		} else {
-			LOGGER.trace("Register spec: {}", spec);
-		}
-	}
-
-	private static Constructor<?> getSuitableConstructorIfAny(Class<?> type) {
-		Constructor<?>[] constructors = type.getDeclaredConstructors();
-		if (constructors.length == 1) {
-			return constructors[0];
-		} else {
-			var injectConstructors = Stream.of(constructors)
-				.filter(c -> c.isAnnotationPresent(Inject.class))
-				.toList();
-			if (injectConstructors.size() == 1) {
-				return injectConstructors.getFirst();
-			} else {
-				return null;
-			}
+			return (Class<?>)sourceType;
 		}
 	}
 

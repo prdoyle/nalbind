@@ -12,7 +12,7 @@ import java.util.List;
  * more than two candidates, than either {@link #option1} or {@link #option2}
  * (or both) will themselves be an {@link AmbiguousSpec}.
  */
-public record AmbiguousSpec(
+record AmbiguousSpec(
 	Class<?> requestedType,
 	InjectionSpec option1,
 	InjectionSpec option2
