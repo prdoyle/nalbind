@@ -14,7 +14,7 @@ public class Module1ServiceImpl implements Module1Service, InjectableSingleton {
 		return "Hello from " + getClass().getSimpleName() + " to my " + listeners.size() + " listeners";
 	}
 
-	@ReportInjected(Module1Listener.class)
+	@ReportInjected
 	public void registerListeners(Collection<Module1Listener> listeners) {
 		this.listeners = listeners;
 	}

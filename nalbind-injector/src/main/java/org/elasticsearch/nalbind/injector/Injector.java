@@ -3,9 +3,10 @@ package org.elasticsearch.nalbind.injector;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -55,10 +56,10 @@ public class Injector {
 			var spec = specsByClass.get(obj.getClass());
 			if (spec instanceof ConstructorSpec c) {
 				for (Method m: c.reportInjectedMethods()) {
-					ReportInjected ri = m.getAnnotation(ReportInjected.class);
-					Class<?> requiredType = ri.value();
+					Type requiredType = ((ParameterizedType)m.getGenericParameterTypes()[0]).getActualTypeArguments()[0];
+					Class<?> requiredClass = rawClass(requiredType);
 					var relevantObjects = distinctInstances.stream()
-						.filter(requiredType::isInstance)
+						.filter(requiredClass::isInstance)
 						.toList();
 					try {
 						m.invoke(obj, relevantObjects);
@@ -67,6 +68,14 @@ public class Injector {
 					}
 				}
 			}
+		}
+	}
+
+	private static Class<?> rawClass(Type sourceType) {
+		if (sourceType instanceof ParameterizedType pt) {
+			return (Class<?>)pt.getRawType();
+		} else {
+			return (Class<?>)sourceType;
 		}
 	}
 
