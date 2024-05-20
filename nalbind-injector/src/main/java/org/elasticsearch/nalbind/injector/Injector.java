@@ -17,7 +17,12 @@ import java.util.Set;
 import java.util.stream.Stream;
 import org.elasticsearch.nalbind.api.Inject;
 import org.elasticsearch.nalbind.api.InjectableSingleton;
-import org.elasticsearch.nalbind.api.ReportInjected;
+import org.elasticsearch.nalbind.api.Injected;
+import org.elasticsearch.nalbind.injector.spec.AliasSpec;
+import org.elasticsearch.nalbind.injector.spec.AmbiguousSpec;
+import org.elasticsearch.nalbind.injector.spec.ConstructorSpec;
+import org.elasticsearch.nalbind.injector.spec.InjectionSpec;
+import org.elasticsearch.nalbind.injector.spec.UnambiguousSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -55,7 +60,7 @@ public class Injector {
 	 * </li><li>
 	 *     All types of parameters passed to the constructor used to instantiate any discovered class.
 	 * </li><li>
-	 *     All types of parameters passed to {@link ReportInjected} methods in any discovered class.
+	 *     All types of parameters passed to {@link Injected} methods in any discovered class.
 	 * </li></ul>
 	 *
 	 * TODO: This is currently a lie. We only discover {@link InjectableSingleton} classes.
@@ -180,7 +185,7 @@ public class Injector {
 		List<Method> result = new ArrayList<>();
 		for (var c = givenClass; c != Object.class; c = c.getSuperclass()) {
 			for (var m: c.getDeclaredMethods()) {
-				if (m.isAnnotationPresent(ReportInjected.class)) {
+				if (m.isAnnotationPresent(Injected.class)) {
 					checkValidInjectedMethod(m);
 					result.add(m);
 				}
@@ -192,12 +197,12 @@ public class Injector {
 	private static void checkValidInjectedMethod(Method method) {
 		var pts = method.getParameterTypes();
 		if (pts.length != 1) {
-			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method to have one parameter: " + method);
+			throw new IllegalStateException("Expected @" + Injected.class.getSimpleName() + " method to have one parameter: " + method);
 		}
 		var pt = pts[0];
 		if (!Collection.class.equals(pt)) {
 			// TODO: It should also a collection of the right type of elements
-			throw new IllegalStateException("Expected @" + ReportInjected.class.getSimpleName() + " method parameter to be a Collection: " + method);
+			throw new IllegalStateException("Expected @" + Injected.class.getSimpleName() + " method parameter to be a Collection: " + method);
 		}
 	}
 
@@ -252,7 +257,7 @@ public class Injector {
 					instances.put(c.requestedType(), instantiate(c.constructor()));
 				}
 				case AliasSpec(var requestedType, var subtype) -> {
-					LOGGER.debug("Aliasing {} to {}", requestedType.getSimpleName(), subtype.getSimpleName());
+					LOGGER.debug("Aliasing {} = {}", requestedType.getSimpleName(), subtype.getSimpleName());
 					instances.put(requestedType, getInstance(subtype));
 				}
 			}
@@ -287,7 +292,7 @@ public class Injector {
 					try {
 						m.invoke(obj, relevantObjects);
 					} catch (IllegalAccessException | InvocationTargetException e) {
-						throw new IllegalStateException("Can't invoke " + ReportInjected.class.getSimpleName() + " method", e);
+						throw new IllegalStateException("Can't invoke " + Injected.class.getSimpleName() + " method", e);
 					}
 				}
 			}

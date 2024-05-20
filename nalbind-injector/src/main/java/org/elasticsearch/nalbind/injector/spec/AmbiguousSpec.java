@@ -1,4 +1,4 @@
-package org.elasticsearch.nalbind.injector;
+package org.elasticsearch.nalbind.injector.spec;
 
 import java.util.Iterator;
 import java.util.List;
@@ -12,7 +12,7 @@ import java.util.List;
  * more than two candidates, than either {@link #option1} or {@link #option2}
  * (or both) will themselves be an {@link AmbiguousSpec}.
  */
-record AmbiguousSpec(
+public record AmbiguousSpec(
 	Class<?> requestedType,
 	InjectionSpec option1,
 	InjectionSpec option2
