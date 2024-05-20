@@ -1,13 +1,18 @@
 package org.elasticsearch.example.module1;
 
 import java.util.Collection;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
 import org.elasticsearch.example.module1.api.Module1Listener;
 import org.elasticsearch.example.module1.api.Module1Service;
 import org.elasticsearch.nalbind.api.InjectableSingleton;
 import org.elasticsearch.nalbind.api.Injected;
 
+import static java.util.Collections.newSetFromMap;
+
 public class Module1ServiceImpl implements Module1Service, InjectableSingleton {
-	Collection<Module1Listener> listeners;
+	final Set<Module1Listener> listeners = newSetFromMap(new IdentityHashMap<>());
 
 	@Override
 	public String greeting() {
@@ -16,6 +21,6 @@ public class Module1ServiceImpl implements Module1Service, InjectableSingleton {
 
 	@Injected
 	public void registerListeners(Collection<Module1Listener> listeners) {
-		this.listeners = listeners;
+		this.listeners.addAll(listeners);
 	}
 }
