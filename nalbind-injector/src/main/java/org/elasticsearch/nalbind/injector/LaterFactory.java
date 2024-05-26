@@ -6,10 +6,8 @@ import java.lang.invoke.MethodType;
 import java.lang.invoke.MutableCallSite;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
-import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Handle;
@@ -19,6 +17,8 @@ import org.objectweb.asm.Opcodes;
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.lang.invoke.MethodType.methodType;
 import static java.util.Objects.requireNonNull;
+import static org.objectweb.asm.ClassWriter.COMPUTE_FRAMES;
+import static org.objectweb.asm.ClassWriter.COMPUTE_MAXS;
 import static org.objectweb.asm.Opcodes.ACC_FINAL;
 import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
 import static org.objectweb.asm.Opcodes.ALOAD;
@@ -37,7 +37,7 @@ public class LaterFactory {
 	public static final AtomicInteger numCallSites = new AtomicInteger(0);
 
 	static <T> Later<T> generateFor(Class<T> returnClass) {
-		ClassWriter cw = new ClassWriter(0);
+		ClassWriter cw = new ClassWriter(COMPUTE_MAXS | COMPUTE_FRAMES);
 
 		// Define the class
 		cw.visit(V1_8, ACC_PUBLIC | ACC_FINAL, "GeneratedClass", null, getInternalName(MutableLater.class), null);
@@ -49,7 +49,7 @@ public class LaterFactory {
 		mv.visitVarInsn(ALOAD, 1);
 		mv.visitMethodInsn(INVOKESPECIAL, getInternalName(MutableLater.class), "<init>", CONSTRUCTOR_DESCRIPTOR, false);
 		mv.visitInsn(RETURN);
-		mv.visitMaxs(99, 99);
+		mv.visitMaxs(0, 0);
 		mv.visitEnd();
 
 		int callSiteNum = numCallSites.incrementAndGet();
@@ -78,7 +78,7 @@ public class LaterFactory {
 
 		// Return the result
 		mv.visitInsn(ARETURN);
-		mv.visitMaxs(99, 99); // Computed automatically
+		mv.visitMaxs(0, 0);
 		mv.visitEnd();
 
 		cw.visitEnd();
