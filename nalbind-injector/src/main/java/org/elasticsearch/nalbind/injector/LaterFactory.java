@@ -6,8 +6,10 @@ import java.lang.invoke.MethodType;
 import java.lang.invoke.MutableCallSite;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
+import java.util.Deque;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Handle;
@@ -16,6 +18,8 @@ import org.objectweb.asm.Opcodes;
 
 import static java.lang.invoke.MethodHandles.lookup;
 import static java.lang.invoke.MethodType.methodType;
+import static java.util.Objects.requireNonNull;
+import static org.objectweb.asm.Opcodes.ACC_FINAL;
 import static org.objectweb.asm.Opcodes.ACC_PUBLIC;
 import static org.objectweb.asm.Opcodes.ALOAD;
 import static org.objectweb.asm.Opcodes.ARETURN;
@@ -36,7 +40,7 @@ public class LaterFactory {
 		ClassWriter cw = new ClassWriter(0);
 
 		// Define the class
-		cw.visit(V1_8, ACC_PUBLIC, "GeneratedClass", null, getInternalName(MutableLater.class), null);
+		cw.visit(V1_8, ACC_PUBLIC | ACC_FINAL, "GeneratedClass", null, getInternalName(MutableLater.class), null);
 
 		// Define the default constructor
 		MethodVisitor mv = cw.visitMethod(ACC_PUBLIC, "<init>", CONSTRUCTOR_DESCRIPTOR, null, null);
@@ -53,7 +57,11 @@ public class LaterFactory {
 		MutableCallSite callSite = newCallSite(MethodType.methodType(returnClass));
 		callSites.put(methodName, callSite);
 
-//		mv = cw.visitMethod(ACC_PUBLIC, "value", "()" + getDescriptor(returnClass), null, null);
+		/* Note that this descriptor returns Object even though we know a more specific
+		   return type, and Java allows covariant return types. Turns out that is a
+		   language feature that isn't available at the bytecode level. Hopefully
+		   this method gets inlined and the jit can see through it to avoid a downcast.
+		 */
 		mv = cw.visitMethod(ACC_PUBLIC, "value", "()" + getDescriptor(Object.class), null, null);
 		mv.visitCode();
 
@@ -102,7 +110,7 @@ public class LaterFactory {
 	}
 
 	public static CallSite bootstrap(MethodHandles.Lookup caller, String name, MethodType type) {
-		return callSites.get(name);
+		return requireNonNull(callSites.remove(name), ()->"CallSite not found: \"" + name + "\"");
 	}
 
 	private static final class CustomClassLoader extends ClassLoader {

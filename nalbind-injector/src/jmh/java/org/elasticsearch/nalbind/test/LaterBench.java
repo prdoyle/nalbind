@@ -18,7 +18,7 @@ import static org.openjdk.jmh.annotations.Mode.Throughput;
 
 @Warmup(time = 2000, timeUnit = MILLISECONDS, iterations = 3)
 @Measurement(time = 2000, timeUnit = MILLISECONDS, iterations = 2)
-@Fork(20)
+@Fork(5)
 @BenchmarkMode(Throughput)
 public class LaterBench {
 	static final int ITERS = 3;
