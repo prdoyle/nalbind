@@ -16,10 +16,10 @@ import static org.openjdk.jmh.annotations.Mode.Throughput;
 
 @Warmup(time = 2000, timeUnit = MILLISECONDS, iterations = 3)
 @Measurement(time = 2000, timeUnit = MILLISECONDS, iterations = 2)
-@Fork(5)
+@Fork(1)
 @BenchmarkMode(Throughput)
 public class ProxyBench {
-	static final int ITERS = 3;
+	static final int ITERS = 10;
 
 	public interface TestInterface {
 		String testMethod(String arg);
@@ -131,7 +131,7 @@ public class ProxyBench {
 		}
 	}
 
-	@Benchmark
+//	@Benchmark
 	public void x_finalProxy(BenchmarkState state, Blackhole blackhole) {
 		for (int i = 0; i < ITERS; i++) {
 			blackhole.consume(state.finalProxy.testMethod("arg"));
@@ -159,14 +159,14 @@ public class ProxyBench {
 		}
 	}
 
-	@Benchmark
+//	@Benchmark
 	public void x_regularField(BenchmarkState state, Blackhole blackhole) {
 		for (int i = 0; i < ITERS; i++) {
 			blackhole.consume(state.regularField.testMethod("arg"));
 		}
 	}
 
-	@Benchmark
+//	@Benchmark
 	public void x_volatileField(BenchmarkState state, Blackhole blackhole) {
 		for (int i = 0; i < ITERS; i++) {
 			blackhole.consume(state.volatileField.testMethod("arg"));
