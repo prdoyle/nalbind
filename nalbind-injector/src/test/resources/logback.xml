@@ -5,7 +5,7 @@
         </encoder>
     </appender>
 
-    <logger name="org.elasticsearch.nalbind" level="DEBUG" />
+    <logger name="org.elasticsearch.nalbind" level="TRACE" />
 
     <root level="INFO">
         <appender-ref ref="STDOUT" />
