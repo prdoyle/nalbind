@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 class InjectorTest {
 
 	@Test
-	void test() {
+	void test() throws InterruptedException {
 		Injector injector = Injector.withFullLayerScan(getClass().getModule().getLayer());
 		Module2Service module2Service = injector.getInstance(Module2Service.class);
 		assertEquals(

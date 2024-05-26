@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 import org.elasticsearch.nalbind.api.Inject;
 import org.elasticsearch.nalbind.api.InjectableSingleton;
 import org.elasticsearch.nalbind.api.Injected;
+import org.elasticsearch.nalbind.api.Now;
 import org.elasticsearch.nalbind.injector.spec.AliasSpec;
 import org.elasticsearch.nalbind.injector.spec.AmbiguousSpec;
 import org.elasticsearch.nalbind.injector.spec.ConstructorSpec;
@@ -32,6 +33,7 @@ import static java.util.stream.Collectors.joining;
 
 public class Injector {
 	private final Map<Class<?>, Object> instances = new HashMap<>();
+	private final List<ProxyFactory.ProxyInfo<?>> proxies = new ArrayList<>();
 
 	private Injector(){}
 
@@ -48,8 +50,35 @@ public class Injector {
 	private void scan(ModuleLayer layer) {
 		var specsByClass = discoveredInjectableClasses(layer);
 		Collection<UnambiguousSpec> plan = instantiationPlan(specsByClass);
+		createProxies(plan);
 		executeInstantiationPlan(plan);
+		resolveProxies();
 		reportInjectedObjects(specsByClass);
+	}
+
+
+	private void createProxies(Collection<UnambiguousSpec> plan) {
+		for (var spec: plan) {
+			// Proxies are for interfaces, and interfaces can't be instantiated;
+			// therefore, proxies are only needed for AliasSpec.
+			if (spec instanceof AliasSpec(var requestedType, var __)) {
+				LOGGER.debug("Creating proxy for {}", requestedType.getSimpleName());
+				var proxyInfo = ProxyFactory.generateFor(requestedType);
+				proxies.add(proxyInfo);
+				instances.put(requestedType, proxyInfo.proxyObject());
+			}
+		}
+	}
+
+	private void resolveProxies() {
+		for (var proxyInfo: proxies) {
+			resolveProxy(proxyInfo);
+		}
+	}
+
+	private <T> void resolveProxy(ProxyFactory.ProxyInfo<T> proxyInfo) {
+		Class<T> type = proxyInfo.interfaceType();
+		proxyInfo.setter().accept(type.cast(instances.get(type)));
 	}
 
 	/**
@@ -229,9 +258,11 @@ public class Injector {
 					throw new IllegalStateException("Cannot instantiate " + requestedClass);
 				case ConstructorSpec c -> {
 					if (c.constructor().getParameterCount() != 0) {
-						LOGGER.trace("Recursing into parameters of {}", c);
-						for (var pt: c.constructor().getParameterTypes()) {
-							updateInstantiationPlan(plan, pt, specsByClass, alreadyPlanned);
+						for (var p: c.constructor().getParameters()) {
+							if (p.isAnnotationPresent(Now.class)) {
+								LOGGER.trace("Recursing into @Now parameter {} of {}", p.getName(), c);
+								updateInstantiationPlan(plan, p.getType(), specsByClass, alreadyPlanned);
+							}
 						}
 					}
 					LOGGER.trace("Plan to call constructor {}", c);
@@ -249,6 +280,12 @@ public class Injector {
 		}
 	}
 
+	/**
+	 * As each object is created, it replaces its proxy in {@link #instances}.
+	 * TODO: This hides errors. We should have a mode where we inject proxies
+	 * to the greatest extent possible to catch cases where people call methods
+	 * without using the @Now annotation.
+	 */
 	private void executeInstantiationPlan(Collection<UnambiguousSpec> plan) {
 		plan.forEach(spec -> {
 			switch (spec) {

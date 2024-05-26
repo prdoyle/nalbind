@@ -54,6 +54,7 @@ public class ProxyFactory {
 	public static final AtomicInteger numCallSites = new AtomicInteger(0);
 
 	public record ProxyInfo<T> (
+		Class<T> interfaceType,
 		T proxyObject,
 		Consumer<T> setter
 	){}
@@ -80,6 +81,7 @@ public class ProxyFactory {
 		T proxy = interfaceType.cast(instantiate(cw));
 		AtomicBoolean alreadySet = new AtomicBoolean(false);
 		return new ProxyInfo<>(
+			interfaceType,
 			proxy,
 			(T newValue) -> {
 				if (alreadySet.getAndSet(true)) {
@@ -211,7 +213,7 @@ public class ProxyFactory {
 	}
 
 	public static void notYetSet() {
-		throw new IllegalStateException("Too early!");
+		throw new IllegalStateException("Cannot invoke method on object that is not fully constructed. Use the @Now annotation on your method's parameter to indicate that you need to call a method on it");
 	}
 
 	public static CallSite bootstrap(MethodHandles.Lookup caller, String name, MethodType type) {
