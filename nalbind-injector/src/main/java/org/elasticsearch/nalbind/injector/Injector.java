@@ -27,6 +27,7 @@ import org.elasticsearch.nalbind.injector.spec.UnambiguousSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static java.util.Arrays.asList;
 import static java.util.Collections.newSetFromMap;
 import static java.util.Objects.requireNonNull;
 import static java.util.stream.Collectors.joining;
@@ -44,7 +45,11 @@ public class Injector {
 	}
 
 	public <T> T getInstance(Class<T> type) {
-		return type.cast(requireNonNull(instances.get(type)));
+		Object instance = instances.get(type);
+		if (instance == null) {
+			throw new IllegalStateException("No injectable instance of " + type);
+		}
+		return type.cast(instance);
 	}
 
 	private void scan(ModuleLayer layer) {
@@ -105,13 +110,13 @@ public class Injector {
 	 * but only if those classes are explicitly named in an injectable constructor somewhere.
 	 */
 	private static Map<Class<?>, InjectionSpec> discoveredInjectableClasses(ModuleLayer layer) {
-		Set<Class<?>> moduleScanResults = new HashSet<>();
+		Set<Class<?>> classesToProcess = new HashSet<>();
 		for (var m: layer.modules()) {
 			for (var p: m.getDescriptor().provides()) {
 				if (InjectableSingleton.class.getName().equals(p.service())) {
 					p.providers().forEach(name -> {
 						try {
-							moduleScanResults.add(m.getClassLoader().loadClass(name));
+							classesToProcess.add(m.getClassLoader().loadClass(name));
 						} catch (ClassNotFoundException e) {
 							throw new IllegalStateException("Unexpected error scanning module layer", e);
 						}
@@ -119,12 +124,12 @@ public class Injector {
 				}
 			}
 		}
-		Set<Class<?>> rootSet = Set.copyOf(moduleScanResults);
-		LOGGER.debug("Root set: {}", rootSet);
+		Set<Class<?>> allInjectableConcreteClasses = Set.copyOf(classesToProcess);
+		LOGGER.debug("Root set: {}", allInjectableConcreteClasses);
 
 		Map<Class<?>, InjectionSpec> specsByClass = new LinkedHashMap<>();
-		for (var c: rootSet) {
-			computeSpec(c, moduleScanResults, specsByClass);
+		for (var c: allInjectableConcreteClasses) {
+			computeSpec(c, classesToProcess, specsByClass);
 		}
 		if (LOGGER.isTraceEnabled()) {
 			LOGGER.trace("Specs: {}",
@@ -241,16 +246,28 @@ public class Injector {
 	private static Collection<UnambiguousSpec> instantiationPlan(Map<Class<?>, InjectionSpec> specsByClass) {
 		// TODO: Cycle detection and reporting. Use SCCs
 		LOGGER.trace("Constructing instantiation plan");
+		Set<Class<?>> allParameterTypes = new HashSet<>();
+		specsByClass.values().forEach(spec -> {
+			if (spec instanceof ConstructorSpec c) {
+				allParameterTypes.addAll(asList(c.constructor().getParameterTypes()));
+			}
+		});
 		List<UnambiguousSpec> plan = new ArrayList<>();
 		Set<InjectionSpec> alreadyPlanned = newSetFromMap(new IdentityHashMap<>());
 		specsByClass.keySet().forEach((c) ->
-			updateInstantiationPlan(plan, c, specsByClass, alreadyPlanned)
+			updateInstantiationPlan(plan, c, specsByClass, allParameterTypes, alreadyPlanned)
 		);
 		LOGGER.trace("Instantiation plan: {}", plan);
 		return plan;
 	}
 
-	private static void updateInstantiationPlan(List<UnambiguousSpec> plan, Class<?> requestedClass, Map<Class<?>, InjectionSpec> specsByClass, Set<InjectionSpec> alreadyPlanned) {
+	private static void updateInstantiationPlan(
+		List<UnambiguousSpec> plan,
+		Class<?> requestedClass,
+		Map<Class<?>, InjectionSpec> specsByClass,
+		Set<Class<?>> allParameterTypes,
+		Set<InjectionSpec> alreadyPlanned
+	) {
 		InjectionSpec spec = specsByClass.get(requestedClass);
 		if (alreadyPlanned.add(spec)) {
 			switch (spec) {
@@ -261,17 +278,27 @@ public class Injector {
 						for (var p: c.constructor().getParameters()) {
 							if (p.isAnnotationPresent(Now.class)) {
 								LOGGER.trace("Recursing into @Now parameter {} of {}", p.getName(), c);
-								updateInstantiationPlan(plan, p.getType(), specsByClass, alreadyPlanned);
+								updateInstantiationPlan(plan, p.getType(), specsByClass, allParameterTypes, alreadyPlanned);
 							}
 						}
 					}
-					LOGGER.trace("Plan to call constructor {}", c);
+					LOGGER.trace("Plan {}", c);
 					plan.add(c);
 				}
 				case AliasSpec a -> {
 					LOGGER.trace("Recursing into subtype for {}", a);
-					updateInstantiationPlan(plan, a.subtype(), specsByClass, alreadyPlanned);
-					LOGGER.trace("Plan to alias {}", a);
+					updateInstantiationPlan(plan, a.subtype(), specsByClass, allParameterTypes, alreadyPlanned);
+					if (allParameterTypes.contains(a.requestedType())) {
+						LOGGER.trace("Plan {}", a);
+					} else {
+						// Could be an opportunity for optimization here.
+						// The _only_ reason we need these unused aliases is in case
+						// somebody asks for one directly from the injector; they are
+						// not needed otherwise.
+						// If we change the injector setup so the user must specify
+						// which types they'll pull directly, we could skip these.
+						LOGGER.trace("Plan unused {}", a);
+					}
 					plan.add(a);
 				}
 				case AmbiguousSpec a ->

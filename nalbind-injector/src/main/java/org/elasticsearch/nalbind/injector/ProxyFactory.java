@@ -49,9 +49,8 @@ import static org.objectweb.asm.Type.getType;
 
 
 public class ProxyFactory {
-
-	public static final Map<String, MutableCallSite> callSites = new ConcurrentHashMap<>();
-	public static final AtomicInteger numCallSites = new AtomicInteger(0);
+	private static final Map<String, MutableCallSite> callSites = new ConcurrentHashMap<>();
+	private static final AtomicInteger numCallSites = new AtomicInteger(0);
 
 	public record ProxyInfo<T> (
 		Class<T> interfaceType,
@@ -59,6 +58,12 @@ public class ProxyFactory {
 		Consumer<T> setter
 	){}
 
+	/**
+	 * The proxies we generate are optimized for run-time performance over generation efficiency.
+	 * One result of this is that every proxy object requires generating and loading its on class,
+	 * so they are expensive to create.
+	 * The caller of this method should make an effort to reuse the resulting objects as much as possible.
+	 */
 	public static <T> ProxyInfo<T> generateFor(Class<T> interfaceType) {
 		if (!interfaceType.isInterface()) {
 			throw new IllegalArgumentException("Only interfaces can be proxied; cannot proxy " + interfaceType);
@@ -78,7 +83,7 @@ public class ProxyFactory {
 
 		cw.visitEnd();
 
-		T proxy = interfaceType.cast(instantiate(cw));
+		T proxy = interfaceType.cast(instantiate(loadProxyClass(cw)));
 		AtomicBoolean alreadySet = new AtomicBoolean(false);
 		return new ProxyInfo<>(
 			interfaceType,
@@ -149,18 +154,18 @@ public class ProxyFactory {
 		}
 	}
 
-	private static Object instantiate(ClassWriter cw) {
-		Object instance;
-		byte[] bytes = cw.toByteArray();
-		Constructor<?> ctor = new CustomClassLoader(ProxyFactory.class.getClassLoader())
-			.loadThemBytes("NALBIND_PROXY", bytes)
+	private static Constructor<?> loadProxyClass(ClassWriter cw) {
+		return new CustomClassLoader(ProxyFactory.class.getClassLoader())
+			.loadThemBytes("NALBIND_PROXY", cw.toByteArray())
 			.getConstructors()[0];
+	}
+
+	private static Object instantiate(Constructor<?> ctor) {
 		try {
-			instance = ctor.newInstance();
+			return ctor.newInstance();
 		} catch (InstantiationException | IllegalAccessException | VerifyError | InvocationTargetException e) {
 			throw new AssertionError("Should be able to instantiate the generated class", e);
 		}
-		return instance;
 	}
 
 	private static <T> void generateValueMethod(Class<T> interfaceType, ClassWriter cw, String methodName) {
@@ -216,6 +221,7 @@ public class ProxyFactory {
 		throw new IllegalStateException("Cannot invoke method on object that is not fully constructed. Use the @Now annotation on your method's parameter to indicate that you need to call a method on it");
 	}
 
+	@SuppressWarnings("unused")
 	public static CallSite bootstrap(MethodHandles.Lookup caller, String name, MethodType type) {
 		return requireNonNull(callSites.remove(name), ()->"CallSite not found: \"" + name + "\"");
 	}
