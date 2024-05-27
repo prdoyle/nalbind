@@ -12,7 +12,7 @@ class InjectorTest {
 
 	@Test
 	void test() throws InterruptedException {
-		Injector injector = Injector.withFullLayerScan(getClass().getModule().getLayer());
+		Injector injector = Injector.withInjectableSingletonsProvidedBy(getClass().getModule().getLayer());
 		Module2Service module2Service = injector.getInstance(Module2Service.class);
 		assertEquals(
 			"Module1Service: Hello from Module1ServiceImpl to my 1 listeners",

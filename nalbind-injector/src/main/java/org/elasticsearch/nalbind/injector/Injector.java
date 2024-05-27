@@ -38,9 +38,13 @@ public class Injector {
 
 	private Injector(){}
 
-	public static Injector withFullLayerScan(ModuleLayer layer) {
+	public static Injector withInjectableSingletonsProvidedBy(ModuleLayer layer) {
+		return withClasses(injectableSingletonsProvidedBy(layer));
+	}
+
+	public static Injector withClasses(Collection<Class<?>> classesToProcess) {
 		Injector result = new Injector();
-		result.scan(layer);
+		result.doInjection(specMap(classesToProcess));
 		return result;
 	}
 
@@ -52,8 +56,7 @@ public class Injector {
 		return type.cast(instance);
 	}
 
-	private void scan(ModuleLayer layer) {
-		var specsByClass = discoveredInjectableClasses(layer);
+	private void doInjection(Map<Class<?>, InjectionSpec> specsByClass) {
 		Collection<UnambiguousSpec> plan = instantiationPlan(specsByClass);
 		createProxies(plan);
 		executeInstantiationPlan(plan);
@@ -86,30 +89,24 @@ public class Injector {
 		proxyInfo.setter().accept(type.cast(instances.get(type)));
 	}
 
-	/**
-	 * The classes this will locate are:
-	 *
-	 * <ul><li>
-	 *     All {@link InjectableSingleton} types provided ny all modules in the given <code>layer</code>
-	 * </li><li>
-	 *     All types of parameters passed to the constructor used to instantiate any discovered class.
-	 * </li><li>
-	 *     All types of parameters passed to {@link Injected} methods in any discovered class.
-	 * </li></ul>
-	 *
-	 * TODO: This is currently a lie. We only discover {@link InjectableSingleton} classes.
-	 * <p>
-	 *
-	 * Note, in particular, that <em>subtypes are not discovered automatically</em>.
-	 * For example, if your constructor takes a parameter whose type is an interface,
-	 * the implementations of that interface will not be discovered unless they are also
-	 * {@link InjectableSingleton}s or are otherwise discoverable as constructor parameters.
-	 *
-	 * <p>
-	 * So it is possible to inject classes that don't inherit {@link InjectableSingleton},
-	 * but only if those classes are explicitly named in an injectable constructor somewhere.
-	 */
-	private static Map<Class<?>, InjectionSpec> discoveredInjectableClasses(ModuleLayer layer) {
+	private static Map<Class<?>, InjectionSpec> specMap(Collection<Class<?>> classesToProcess) {
+		LOGGER.debug("Root set: {}", classesToProcess);
+
+		Set<Class<?>> checklist = new HashSet<>(classesToProcess);
+		Map<Class<?>, InjectionSpec> specsByClass = new LinkedHashMap<>();
+		for (var c: classesToProcess) {
+			computeSpec(c, checklist, specsByClass);
+		}
+		if (LOGGER.isTraceEnabled()) {
+			LOGGER.trace("Specs: {}",
+				specsByClass.values().stream()
+					.map(Object::toString)
+					.collect(joining("\n\t", "\n\t", "")));
+		}
+		return specsByClass;
+	}
+
+	private static Set<Class<?>> injectableSingletonsProvidedBy(ModuleLayer layer) {
 		Set<Class<?>> classesToProcess = new HashSet<>();
 		for (var m: layer.modules()) {
 			for (var p: m.getDescriptor().provides()) {
@@ -124,20 +121,7 @@ public class Injector {
 				}
 			}
 		}
-		Set<Class<?>> allInjectableConcreteClasses = Set.copyOf(classesToProcess);
-		LOGGER.debug("Root set: {}", allInjectableConcreteClasses);
-
-		Map<Class<?>, InjectionSpec> specsByClass = new LinkedHashMap<>();
-		for (var c: allInjectableConcreteClasses) {
-			computeSpec(c, classesToProcess, specsByClass);
-		}
-		if (LOGGER.isTraceEnabled()) {
-			LOGGER.trace("Specs: {}",
-				specsByClass.values().stream()
-					.map(Object::toString)
-					.collect(joining("\n\t", "\n\t", "")));
-		}
-		return specsByClass;
+		return classesToProcess;
 	}
 
 	/**
