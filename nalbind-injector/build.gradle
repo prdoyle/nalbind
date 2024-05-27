@@ -10,7 +10,7 @@ dependencies {
 
     implementation 'org.ow2.asm:asm:9.7'
 
-    testImplementation(project(":module2"))
+//    testImplementation(project(":module2"))
     testImplementation 'ch.qos.logback:logback-classic:1.5.6'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.10.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.10.2'
